@@ -1,10 +1,5 @@
 ---
-title: "Lactate Analysis Performed on the Tarragona Database"
-knit: (function(input_file, encoding) {
-  out_dir <- 'docs';
-  rmarkdown::render(input_file,
- encoding=encoding,
- output_file=file.path(dirname(input_file), out_dir, 'indexLactateTarragona.html'))})
+title: "Tarragona_LactateAnalysis"
 author: "Giovana Gavidia"
 date: "May 10, 2019"
 output: html_document
@@ -19,7 +14,7 @@ source(file='mainFunctionsMimics.R')
 ## Read Data
 ```{r message=FALSE, warning=FALSE}
 PatInfo <- read.csv("~/Documents/Projects/DATATHON/MIMIC/data/Tarragona/PatInfoApril2019.csv", stringsAsFactors=FALSE)
-# info demografica de los pacientes a 1 linia por paciente. Respecto al que ya tenias hay una columna más que se llama VMI, que es un 1 si llevaron ventilación mecánica invasiva el primer dia de estancia y un NA si no la llevaron. Aquí está el APACHEII para hacer los grupos por deciles.
+# info demografica de los pacientes a 1 linia por paciente. Respecto al que ya tenias hay una columna más que se llama Ventilation, que es un 1 si llevaron ventilación mecánica invasiva el primer dia de estancia y un NA si no la llevaron. Aquí está el APACHEII para hacer los grupos por deciles.
 # 
 
 # 
@@ -34,14 +29,49 @@ Vasopressors_FirstDay <- read.csv("~/Documents/Projects/DATATHON/MIMIC/data/Tarr
 ```
 
 # Preprocessing
+*  Replace ',' by . in the numerical variables.
+* Rename VMI variable by 'Ventilation'
+* Replace NAs by 0s (no ventilation) in the Ventilation variable
+* In some cases, The PatInfo table included more than one observation per patient, thus, in those cases only the first observation was included in the analysis.
+* APACHE values were discretized according to  deciles (APACHE_dec)
 
 ```{r message=FALSE, warning=FALSE, echo=FALSE}
-
+library(kableExtra)
 # Replace ',' by .
 FirstDayVars<-data.frame(FirstDayVars[,c('PatientID','VariableID','VarName')], apply(FirstDayVars[,c('FirstValue','LastValue','MaxValue','MinValue','AvgValue','StdvValue', 'MedianValue','IQR1Value','IQR3Value')],2, covertComma2Period) ) 
+
+Vasopressors_FirstDay$Dose<-covertComma2Period(Vasopressors_FirstDay$Dose)
+
+# Rename VMI
+colnames(PatInfo)[which(colnames(PatInfo)=='VMI')]<-'Ventilation'
+# Replace Nas by 0s in the Ventilation variable
+PatInfo[which(is.na(PatInfo$Ventilation)),'Ventilation']<-0
+
+# Include only the first sample per each patient
+
+id_dup<-names(which(table(PatInfo$PatientID)>1))
+PatInfo_dup<-subset(PatInfo, PatientID %in% id_dup)
+
+head(PatInfo_dup) %>%
+  kable() %>%
+  kable_styling()
+
+ 
+ 
+PatInfo.first<-do.call(rbind, by(PatInfo, list(PatInfo$PatientID), FUN=function(x) head(x, 1)))
+
+#---- classify APACHE using deciles
+
+# quantile(PatInfo$APACHEII, prob = seq(0, 1, length = 11), type = 5)
+
+PatInfo.first$APACHEII_dec<-cut( PatInfo.first$APACHEII, quantile(PatInfo.first$APACHEII, prob = seq(0, 1, length = 11), type = 5),labels=seq(1,10,1),include.lowest = TRUE )
+
 ```
 
 ## Initial Lactate vs. APACHE Analysis
+
+* In this part, we focused only on the maximum  values computed to Lactate.
+* Several participants have more that one lactate value, so only the highest maximum value recorded was considered
 ```{r message=FALSE, warning=FALSE, echo=FALSE, results='asis',fig.height = 7, fig.width = 10, fig.align = "center"}
 
 # Focus only the Max values computed to Lactate
@@ -52,15 +82,19 @@ d.lactate<-subset(FirstDayVars, VarName %in% "Lactate")
 library(reshape2)
 d.lactate.max <- dcast(d.lactate[,c('PatientID','VarName','MaxValue')], PatientID ~ VarName, value.var="MaxValue",fun=max)
 
-#---- classify APACHE using deciles
+d.lactate.max<-merge(d.lactate.max,PatInfo.first[,c('PatientID','Gender','AgeAtAdm','APACHEII','APACHEII_dec','Ventilation')],by='PatientID',all.x = TRUE)
 
-# quantile(PatInfo$APACHEII, prob = seq(0, 1, length = 11), type = 5)
+print("15 patients who have lactate values did not have APACHE info, so, they were excluded from the study")
 
-PatInfo$APACHEII_dec<-cut( PatInfo$APACHEII, quantile(PatInfo$APACHEII, prob = seq(0, 1, length = 11), type = 5),labels=seq(1,10,1),include.lowest = TRUE )
+library(kableExtra)
+d.noAPACHE<-subset(d.lactate.max,is.na(APACHEII_dec))
+rownames(d.noAPACHE)<-NULL
+d.noAPACHE %>%
+  kable() %>%
+  kable_styling()
 
-d.lactate.max<-merge(d.lactate.max,PatInfo[,c('PatientID','APACHEII','APACHEII_dec')],by='PatientID',all.x = TRUE)
 
-print("15 patients who have lactate values do not have APACHE info, so, they were removed")
+
 d.lactate.max<-subset(d.lactate.max,!is.na(APACHEII_dec))
 
 library(psych)
@@ -83,7 +117,7 @@ res %>%
 
 ```
 
-* Distribution of the Lactate valeus according to the APACHE categories
+* Distribution of the Lactate values according to the APACHE categories
 
 ```{r message=FALSE, warning=FALSE, echo=FALSE, results='asis',fig.height = 7, fig.width = 10, fig.align = "center"}
 # d<-d.lactate.max[,c('APACHEII_dec','Lactate')]
@@ -118,7 +152,7 @@ print(ggplot(d.lactate.max, aes(x=Lactate, fill=APACHEII_dec)) + geom_density(al
 
 ```
 
-* Figure below show that the 5th decile has the largest number of patients.
+* Figure below show that the 6th decile has the largest number of patients.
 
 ```{r message=FALSE, warning=FALSE, echo=FALSE, results='asis',fig.height = 7, fig.width = 10, fig.align = "center"}
   
@@ -142,60 +176,152 @@ res %>%
   # dev.off()
 ```
 
-## Exploration of ICU Tratments Differences
+## Exploratory Data Analysis of the lactate types according to the vasopressors and Ventilation therapies
 
 We want to visualize the total dose of vasopressor on the first day in the ICU for each drug listed here:
 
+Note:
 * Dopamine
 * Adrenaline (in MIMICS, it is equivalent to Epinephrine)
 * Noradrenaline (in MIMICS, it is equivalent to Norepinephrine)
+* In Tarragona, they do not use Phenylephrine and  Vasopressin
 
- In Tarragona, thet do not use Phenylephrine and  Vasopressin
+The complete Vasopressors_FirstDay database only includes observations from 1208 patients but the Lactate table includes samples from 3095 patients. Thus, the vasopressors table was filtered keeping only samples from the patients with Lactate values.
+
+Figure below shows the missingness pattern in data according to some sociodemographic variables, ventilation and vasopressors. Percentages represent the amount of missing observation for each variable. Missing samples are highlighted in black. In addition, the graph also provides information on the overall percentage of missing values overall (in the legend). 
 
 
-Figure below shows the missingness pattern in data according to Gender, VMI and drugs. Percentages represent the amount of missing observation for each variables. Missing samples are highlighted in black. In addition, the graph also provide information on the overall percentage of missing values overall (in the legend). Note that almost 29% of patients were not assisted with a VMI (Invasive Mechanical Ventilation).
+* Lactate values were discretized as normal (Lactate < 2) and non-normal (Lactate >=2)
+* The number of vasopressors therapies as well as the total doses by each patient were computed
 
+By comparing the usage of vasopressors, we found that dopamine is used less than both Dobutamine and Noradrenaline, and Noradrenaline (equivalent to Norepinephrine) is the most used therapy.
 
 
 ```{r message=FALSE, warning=FALSE, echo=FALSE, results='asis', fig.height = 7, fig.width = 10, fig.align = "center"}
 
 # DrugsApril2019 <- Tienes las drogas vasoactivas que se dieron el primer dia de estancia y sus dosis. Dopamine igual que el MIT, Epinephrine y Norepinephrine son Adrenaline y Noradrenaline en nuestro caso, son las mismas drogas con diferente nombre, y finalmente Phenylephrine y vasopressin no usamos... Te las doy por separado para que puedas hacer analisis por separado, pero si quieres hacer analisis de dosis de drogas vasoactivas total tendrás que sumar las dosis de todas las que haya llevado un mismo paciente, y para tener el numero pues contar cuantas diferentes han recibido.
-Vasopressors_FirstDay <- read.csv("~/Documents/Projects/DATATHON/MIMIC/data/Tarragona/DrugsApril2019.csv", stringsAsFactors=FALSE)
-
-d.Vasopressors<-merge(Vasopressors_FirstDay, PatInfo[,c("PatientID", "APACHEII","Gender", "VMI","APACHEII_dec")], by='PatientID', all.x = TRUE)
-d.Vasopressors$Dose<-covertComma2Period(d.Vasopressors$Dose)
 
 # reshape long 2 wide
 
 library(reshape2)
 
-dw.Vasopressors <- dcast(d.Vasopressors, PatientID + Gender + VMI + APACHEII_dec ~ Drug, value.var="Dose")
+dw.Vasopressors <- dcast(Vasopressors_FirstDay, PatientID ~ Drug, value.var="Dose")
+
+d.lactate.max<-merge(d.lactate.max,dw.Vasopressors , by='PatientID',all.x = TRUE)
+
 
 library(naniar)
 
-print(vis_miss(dw.Vasopressors ))
+print(vis_miss(d.lactate.max ))
 
 
 
 ```
 
-* Following graph shows the usage of drugs according to the APACHE groups. Most of the patients were treated with Noradrenaline, where most of the patients belong to the APACHE Group 10
+* Following graph shows the patterns in data from people who used vasopressors according to the APACHE groups and Lactate groups. In both lactate groups, most of the patients were treated with Noradrenaline. In the non-normal lactate group, most of the patients belong to the APACHE Group 10. Also,we found that Dopamine is the therapy less used within both lactate groups.
 ```{r message=FALSE, warning=FALSE, echo=FALSE, results='asis', fig.height = 7, fig.width = 10, fig.align = "center"}
 library(ggplot2)
+
+d.lactate.max$typeLactate<-NA
+d.lactate.max[which(d.lactate.max$Lactate<2),'typeLactate']<-'Normal[<2]'
+d.lactate.max[which(d.lactate.max$Lactate>=2),'typeLactate']<-'Non-normal[>=2]'
+
+
+d.vaso.ocu<-d.lactate.max[,c('PatientID','APACHEII_dec','Gender','typeLactate','Ventilation','Dobutamine','Dopamine','Noradrenaline')]
+
+
+library(reshape2)
+
+# Specify id.vars: the variables to keep but not split apart on
+d.vaso.ocu<-melt(d.vaso.ocu, id.vars=c( "PatientID","APACHEII_dec","Ventilation","Gender","typeLactate"))
+
+d.vaso.ocu<-subset(d.vaso.ocu,!is.na(value))
+
 # plotStatisticsWhole(d=dw.Vasopressors,plot_title='',source='Patient',sizeFont=3.5,groupname='APACHEII_dec')
 
-g <- ggplot(d.Vasopressors, aes(Drug))+
-   geom_bar(aes(fill = APACHEII_dec), position = position_stack(reverse = TRUE)) +
- coord_flip() +
-  theme_bw() +
+g <- ggplot(d.vaso.ocu, aes(variable))+
+   geom_bar(aes(fill = APACHEII_dec), position = position_dodge()) +
+  theme_minimal() + xlab('Vasopressors therapies')+ylab('Number of patients')+
     theme(plot.title = element_text(size = 14, family = "Helvetica", face = "bold"),
     text = element_text(size = 14, family = "Helvetica"),
     axis.title = element_text(face="bold"),
-    axis.text.x=element_text(size = 14))
+    axis.text.x=element_text(size = 14))+
+  facet_grid(typeLactate ~.)
  #theme(legend.position = "top")
 
 print(g)
 
 ```
 
-## Next Steps: Obtain some plots considering normal and non-normal values of Lactate.
+
+Following graph shows the vasopressor counts according to the lactate type (normal and non-normal values). As in the MIMICs database, Figure shows that most of the patients who received at least one vasopressor therapy had non-normal lactate. Also, the graph also shows that most of the patients in the Tarragona database did not received any vasoppressor therapy.
+
+
+```{r message=FALSE, warning=FALSE, echo=FALSE, results='asis', fig.height = 7, fig.width = 10, fig.align = "center"}
+# select the last observation per patient and variable
+
+# d.lactate.max$typeLactate<-NA
+# d.lactate.max[which(d.lactate.max$Lactate<2),'typeLactate']<-'Normal[<2]'
+# d.lactate.max[which(d.lactate.max$Lactate>=2),'typeLactate']<-'Non-normal[>=2]'
+
+d.vaso.ocu$APACHEII_dec<-as.character(d.vaso.ocu$APACHEII_dec)
+
+vaso.count<-aggregate(variable~ PatientID , data = d.vaso.ocu,FUN = "length")
+# vaso.dose<-aggregate(Dose~ PatientID , data = d.vaso.ocu,FUN = "sum")
+
+# vaso.count<-merge(vaso.count, vaso.dose, by='PatientID')
+
+# merge vasopressors with lactate data
+d.lactate.max<-merge(d.lactate.max,vaso.count, by='PatientID',all.x = TRUE)
+colnames(d.lactate.max)[which(colnames(d.lactate.max)=='variable')]<-'vasopressor_count'
+d.lactate.max[which(is.na(d.lactate.max$vasopressor_count)),'vasopressor_count']<-0
+
+
+# plot the vasopressor count
+
+
+tbl <- with(d.lactate.max, table(vasopressor_count, typeLactate,exclude = NULL))
+
+tbl %>%
+  kable() %>%
+  kable_styling()
+
+
+
+library(ggplot2)
+
+p.vasocount <- ggplot(as.data.frame(tbl), aes(vasopressor_count, Freq, fill = typeLactate)) +     
+  geom_col(position = 'dodge')+
+  theme_minimal() +
+  scale_fill_manual(values=c('Non-normal[>=2]'='#E69F00','Normal[<2]'='darkblue'))+
+    theme(plot.title = element_text(size = 14, family = "Helvetica", face = "bold"),
+    text = element_text(size = 14, family = "Helvetica"),
+    axis.title = element_text(face="bold"),
+    axis.text.x=element_text(size = 14))
+ #theme(legend.position = "top")
+
+print(p.vasocount)
+
+
+```
+
+Following tables and graph represent the relationship between Lactate type and Ventilation therapy. Most of those who received Ventilation had non-normal lactate values.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE, results='asis', fig.height = 7, fig.width = 10, fig.align = "center"}
+# select the last observation per patient and variable
+
+library(ggplot2)
+
+t_lact_Ventilation<-with(d.lactate.max, table(typeLactate, Ventilation , exclude= NULL))
+t_lact_Ventilation %>%
+  kable() %>%
+  kable_styling()
+  
+library(ggpubr)
+p.lact_Ventilation<-ggballoonplot(as.data.frame(t_lact_Ventilation), fill='value') +     
+  scale_fill_viridis_c(option='C')
+  
+  
+print(p.lact_Ventilation)
+
+```
